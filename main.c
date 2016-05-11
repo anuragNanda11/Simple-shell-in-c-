@@ -15,21 +15,43 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+static void handle_redirection(char **argv, int op_index) {
+    FILE *fp = NULL;
+    if(strcmp(argv[op_index], ">") == 0) {
+        fp = fopen(argv[op_index+1], "w");
+        dup2(fileno(fp), STDOUT_FILENO);
+    } else if (strcmp(argv[op_index], "<") == 0) {
+        fp = fopen(argv[op_index+1], "r");
+        dup2(fileno(fp), STDIN_FILENO);
+    } else if (strcmp(argv[op_index], ">>") == 0) {
+        fp = fopen(argv[op_index+1], "a");
+        dup2(fileno(fp), STDOUT_FILENO);
+    } else if (strcmp(argv[op_index], "2>") == 0) {
+        fp = fopen(argv[op_index+1], "w");
+        dup2(fileno(fp), STDERR_FILENO);
+    } else if (strcmp(argv[op_index], "2>>") == 0) {
+        fp = fopen(argv[op_index+1], "a");
+        dup2(fileno(fp), STDERR_FILENO);
+    }
 
-
-void execute(char **argv, int tok_count){
-    bool is_pipe = false;
-    bool redirect = false;
-    char *arg1[tok_count];
-    int index = 0;
     
+    argv[op_index] = NULL;
     
-    FILE *fp = fopen("file.txt", "w");
     if (fp == NULL)
     {
         printf("Error opening file!\n");
         exit(1);
     }
+    fclose(fp);
+    execvp(*argv,argv);
+}
+
+
+static void execute(char **argv, int tok_count){
+    
+    bool is_pipe = false;
+    char *arg1[tok_count];
+    int index = 0;
     
     for (; index < tok_count-1; index++) {
         
@@ -37,11 +59,13 @@ void execute(char **argv, int tok_count){
             arg1[index] = NULL;
             is_pipe = true;
             break;
-        }
-        if (strcmp(argv[index], ">")) {
-            redirect = true;
-            
-            break;
+        } else if (strcmp(argv[index], ">")==0
+                   ||strcmp(argv[index], "<") == 0
+                   ||(strcmp(argv[index], ">>") == 0)
+                   ||(strcmp(argv[index], "2>") == 0)
+                   ||(strcmp(argv[index], "2>>") == 0)) {
+            handle_redirection(argv, index);
+            return;
         }
         arg1[index] = argv[index];
     }
@@ -54,16 +78,21 @@ void execute(char **argv, int tok_count){
 
     
         if(childpid == 0) {
+            if (dup2(pipefd[1], 1) < 0) {
+                fprintf(stderr, "Error in duping: %s\n", strerror(errno));
+                exit(1);
+            }
             close(pipefd[0]);
-            dup2(pipefd[1], 1);
             close(pipefd[1]);
             execvp(*arg1, arg1);
-            printf("failed to exec command 1");
             exit (127);
         }
     
+        if (dup2(pipefd[0],0) < 0) {
+            fprintf(stderr, "Error in duping: %s\n", strerror(errno));
+            exit(1);
+        }
         close(pipefd[1]);
-        dup2(pipefd[0],0);
         close(pipefd[0]);
     
     
@@ -76,7 +105,7 @@ void execute(char **argv, int tok_count){
     }
     
     fprintf(stderr, "Can't execute Command %s: %s\n",argv[0], strerror(errno));
-        exit(1);
+    exit(127);
 
 }
 
@@ -86,6 +115,7 @@ static bool bgrnd_ps(char *str) {
     if (strcmp(str, "&") == 0) return true;
     return false;
 }
+
 
 
 static int parse(char *input, char **argv, int max_args) {
@@ -106,13 +136,6 @@ static int parse(char *input, char **argv, int max_args) {
     argv[tokenCount] = NULL;
     return tokenCount+1;
 }
-
-
-
-
-
-
-
 
 int main(void) {
     char input[1024];
